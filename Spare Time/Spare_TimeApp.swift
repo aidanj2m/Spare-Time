@@ -9,9 +9,20 @@ import SwiftUI
 
 @main
 struct Spare_TimeApp: App {
+    @State private var userId: String? = UserDefaults.standard.string(forKey: "userId")
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            Group {
+                if let userId {
+                    HomeView(userId: userId)
+                } else {
+                    OnboardingView { id in
+                        userId = id
+                    }
+                }
+            }
+            .preferredColorScheme(.dark)
         }
     }
 }
