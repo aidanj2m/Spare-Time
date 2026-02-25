@@ -80,8 +80,9 @@ struct APIService {
         let notes: String?
     }
 
-    struct MatchResponse: Codable {
+    struct MatchResponse: Codable, Equatable {
         let id: String
+        let user_id: String
         let date_played: String
         let total_score: Int?
     }
@@ -105,21 +106,39 @@ struct APIService {
         return match.id
     }
 
-    struct MatchUpdatePayload: Codable {
-        let total_score: Int?
-        let lane: Int?
-        let location: String?
-        let notes: String?
-    }
-
     static func updateMatch(matchId: String, totalScore: Int?, lane: Int?, location: String?, notes: String?) async throws {
-        guard let url = URL(string: "\(baseURL)/matches/\(matchId)") else {
+        // Fetch existing match to get required user_id and date_played
+        guard let getUrl = URL(string: "\(baseURL)/matches/\(matchId)") else {
+            throw URLError(.badURL)
+        }
+        let (getData, getResponse) = try await URLSession.shared.data(from: getUrl)
+        guard let getHttp = getResponse as? HTTPURLResponse, (200...299).contains(getHttp.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        let existing = try JSONDecoder().decode(MatchResponse.self, from: getData)
+
+        // PUT to /matches/ (upsert) with full payload
+        guard let url = URL(string: "\(baseURL)/matches/") else {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(MatchUpdatePayload(
+
+        struct UpsertPayload: Codable {
+            let id: String
+            let user_id: String
+            let date_played: String
+            let total_score: Int?
+            let lane: Int?
+            let location: String?
+            let notes: String?
+        }
+
+        request.httpBody = try JSONEncoder().encode(UpsertPayload(
+            id: matchId,
+            user_id: existing.user_id,
+            date_played: existing.date_played,
             total_score: totalScore,
             lane: lane,
             location: location,
@@ -135,7 +154,7 @@ struct APIService {
     }
 
     static func deleteMatch(matchId: String) async throws {
-        guard let url = URL(string: "\(baseURL)/matches/\(matchId)") else {
+        guard let url = URL(string: "\(baseURL)/matches/\(matchId)/") else {
             throw URLError(.badURL)
         }
         var request = URLRequest(url: url)
@@ -172,6 +191,7 @@ struct APIService {
         let pins_standing: [Int]
         let running_total: Int?
         let line_drawing: LineDrawing?
+        let ball_speed: Int?
     }
 
     struct FrameResponse: Codable {
@@ -183,6 +203,7 @@ struct APIService {
         let is_strike: Bool
         let is_spare: Bool
         let running_total: Int?
+        let ball_speed: Int?
     }
 
     static func upsertFrame(_ payload: FramePayload) async throws {
@@ -212,6 +233,52 @@ struct APIService {
         }
 
         return try JSONDecoder().decode([FrameResponse].self, from: data)
+    }
+
+    // MARK: - Series
+
+    struct SeriesPayload: Codable {
+        let user_id: String
+        let game_ids: [String]
+        let series: Int
+    }
+
+    struct SeriesResponse: Codable, Equatable {
+        let id: String
+        let user_id: String
+        let game_ids: [String]
+        let series: Int
+    }
+
+    static func createSeries(_ payload: SeriesPayload) async throws -> SeriesResponse {
+        guard let url = URL(string: "\(baseURL)/series/") else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return try JSONDecoder().decode(SeriesResponse.self, from: data)
+    }
+
+    static func fetchSeries(userId: String) async throws -> [SeriesResponse] {
+        guard let url = URL(string: "\(baseURL)/series/?user_id=\(userId)") else {
+            throw URLError(.badURL)
+        }
+
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return try JSONDecoder().decode([SeriesResponse].self, from: data)
     }
 
     // MARK: - User profile

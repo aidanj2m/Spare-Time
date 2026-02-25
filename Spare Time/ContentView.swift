@@ -15,30 +15,20 @@ struct ContentView: View {
     @State private var completedFrames: [Frame] = []
     @State private var framePins: [Int: [Int]] = [:]  // frameNumber -> pinsStanding
     @State private var frameDrawings: [Int: LineDrawing] = [:]  // frameNumber -> lineDrawing
+    @State private var frameBallSpeeds: [Int: Int] = [:]  // frameNumber -> ballSpeed
     @State private var frameLastStep: [Int: FrameStep] = [:]  // frameNumber -> last step
     @State private var showSummary = false
     @Environment(\.dismiss) private var dismiss
 
-    /// Last resolved cumulative running total from completed frames
-    private var previousTotal: Int {
-        // Walk backwards through completed frames to find the last non-nil running total
-        for frame in completedFrames.reversed() {
-            if let total = frame.runningTotal {
-                return total
-            }
-        }
-        return 0
-    }
-
     var body: some View {
         FrameView(
             frameNumber: currentFrame,
-            previousTotal: previousTotal,
+            completedFrames: completedFrames,
             initialFrame: completedFrames.first { $0.id == currentFrame },
             initialStep: frameLastStep[currentFrame] ?? .keypad,
             onComplete: handleFrameComplete,
             onPreviousFrame: currentFrame > 1 ? { goToPreviousFrame() } : nil,
-            onCancel: { Task { await cancelMatch() } }
+            onCancel: { goHome() }
         )
         .id(currentFrame)
         .transition(.asymmetric(
@@ -48,12 +38,16 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showSummary) {
             MatchSummaryView(
                 matchId: matchId,
+                userId: userId,
                 completedFrames: completedFrames,
                 onDone: {
                     showSummary = false
                     dismiss()
                 }
             )
+        }
+        .task(id: matchId) {
+            await loadExistingFrames()
         }
     }
 
@@ -149,11 +143,14 @@ struct ContentView: View {
 
     // MARK: - Frame Completion
 
-    private func handleFrameComplete(frame: Frame, pinsStanding: [Int], lineDrawing: LineDrawing?, lastStep: FrameStep) {
+    private func handleFrameComplete(frame: Frame, pinsStanding: [Int], lineDrawing: LineDrawing?, ballSpeed: Int?, lastStep: FrameStep) {
         frameLastStep[frame.id] = lastStep
         framePins[frame.id] = pinsStanding
         if let ld = lineDrawing {
             frameDrawings[frame.id] = ld
+        }
+        if let speed = ballSpeed {
+            frameBallSpeeds[frame.id] = speed
         }
 
         let oldTotals = completedFrames.map { $0.runningTotal }
@@ -186,7 +183,8 @@ struct ContentView: View {
                     is_spare: f.isSpare,
                     pins_standing: framePins[f.id] ?? [],
                     running_total: f.runningTotal,
-                    line_drawing: frameDrawings[f.id]
+                    line_drawing: frameDrawings[f.id],
+                    ball_speed: frameBallSpeeds[f.id]
                 )
                 do {
                     try await APIService.upsertFrame(payload)
@@ -206,16 +204,65 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Cancel / delete match
+    // MARK: - Go Home
 
-    private func cancelMatch() async {
-        guard !matchId.isEmpty else { dismiss(); return }
-        do {
-            try await APIService.deleteMatch(matchId: matchId)
-        } catch {
-            print("[API] Failed to delete match: \(error)")
+    private func goHome() {
+        if completedFrames.isEmpty && !matchId.isEmpty {
+            // No frames entered — delete the empty match
+            Task {
+                try? await APIService.deleteMatch(matchId: matchId)
+                dismiss()
+            }
+        } else {
+            dismiss()
         }
-        dismiss()
+    }
+
+    // MARK: - Resume existing match
+
+    private func loadExistingFrames() async {
+        guard !matchId.isEmpty else { return }
+        do {
+            let apiFrames = try await APIService.fetchFrames(matchId: matchId)
+            guard !apiFrames.isEmpty else { return }
+
+            var loaded: [Frame] = []
+            for af in apiFrames.sorted(by: { $0.frame_number < $1.frame_number }) {
+                var frame = Frame(id: af.frame_number)
+                frame.firstShot = af.first_shot
+
+                if af.frame_number < 10 {
+                    frame.secondShot = af.is_spare ? -1 : af.second_shot
+                } else {
+                    // 10th frame second shot
+                    if af.is_spare {
+                        frame.secondShot = -1
+                    } else {
+                        frame.secondShot = af.second_shot
+                    }
+                    // 10th frame third shot: detect spare (X, n, /)
+                    if let first = af.first_shot, first == 10,
+                       let second = af.second_shot, second > 0, second < 10,
+                       let third = af.third_shot, second + third == 10 {
+                        frame.thirdShot = -1
+                    } else {
+                        frame.thirdShot = af.third_shot
+                    }
+                }
+
+                frame.runningTotal = af.running_total
+                loaded.append(frame)
+
+                if let speed = af.ball_speed {
+                    frameBallSpeeds[af.frame_number] = speed
+                }
+            }
+
+            completedFrames = loaded
+            currentFrame = min(loaded.count + 1, 10)
+        } catch {
+            print("[ContentView] Failed to load existing frames: \(error)")
+        }
     }
 
     // MARK: - Navigation

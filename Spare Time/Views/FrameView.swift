@@ -5,12 +5,13 @@ enum FrameStep {
     case pinSelection
     case drawing
     case breakpoint
+    case ballSpeed
 }
 
 struct FrameView: View {
     let frameNumber: Int
-    var previousTotal: Int = 0
-    var onComplete: (Frame, [Int], LineDrawing?, FrameStep) -> Void = { _, _, _, _ in }
+    var completedFrames: [Frame] = []
+    var onComplete: (Frame, [Int], LineDrawing?, Int?, FrameStep) -> Void = { _, _, _, _, _ in }
     var onPreviousFrame: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
 
@@ -26,20 +27,21 @@ struct FrameView: View {
     @State private var breakpointCoord: LaneCoordinate? = nil
     @State private var entryCoord: LaneCoordinate? = nil
     @State private var skippedDrawing = false
+    @State private var ballSpeed: Int? = nil
 
     private let bgColor = Theme.background
 
     init(
         frameNumber: Int,
-        previousTotal: Int = 0,
+        completedFrames: [Frame] = [],
         initialFrame: Frame? = nil,
         initialStep: FrameStep = .keypad,
-        onComplete: @escaping (Frame, [Int], LineDrawing?, FrameStep) -> Void = { _, _, _, _ in },
+        onComplete: @escaping (Frame, [Int], LineDrawing?, Int?, FrameStep) -> Void = { _, _, _, _, _ in },
         onPreviousFrame: (() -> Void)? = nil,
         onCancel: (() -> Void)? = nil
     ) {
         self.frameNumber = frameNumber
-        self.previousTotal = previousTotal
+        self.completedFrames = completedFrames
         self.onComplete = onComplete
         self.onPreviousFrame = onPreviousFrame
         self.onCancel = onCancel
@@ -48,8 +50,14 @@ struct FrameView: View {
     }
 
     var runningTotal: Int? {
-        guard let ft = frame.frameTotal else { return nil }
-        return previousTotal + ft
+        guard frame.frameTotal != nil else { return nil }
+        // Build temporary frame list including the in-progress frame
+        var allFrames = completedFrames.filter { $0.id != frameNumber }
+        allFrames.append(frame)
+        allFrames.sort { $0.id < $1.id }
+        let totals = ScoreCalculator.runningTotals(for: allFrames)
+        guard let idx = allFrames.firstIndex(where: { $0.id == frameNumber }) else { return nil }
+        return totals[idx]
     }
 
     var canAdvance: Bool {
@@ -63,7 +71,7 @@ struct FrameView: View {
         case .pinSelection:
             let needed = frame.pinsRemaining
             return pins.filter { $0.isSelected }.count == needed
-        case .drawing, .breakpoint:
+        case .drawing, .breakpoint, .ballSpeed:
             return true
         }
     }
@@ -72,144 +80,116 @@ struct FrameView: View {
         ZStack {
             bgColor.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                // Top bar: back-to-previous-frame arrow + frame label
-                HStack {
-                    if let cancel = onCancel, frameNumber == 1, step == .keypad {
-                        Button {
-                            cancel()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(Theme.primary.opacity(0.5))
+            if step == .ballSpeed {
+                BallSpeedView(
+                    frameNumber: frameNumber,
+                    ballSpeed: $ballSpeed,
+                    onContinue: { step = .drawing },
+                    onSkip: { ballSpeed = nil; step = .drawing },
+                    onBack: {
+                        if frameNumber == 10 {
+                            step = .keypad
+                            enteringFirst = false
+                            enteringThird = frame.earnsThirdShot
+                        } else {
+                            step = frame.isStrike ? .keypad : .pinSelection
                         }
-                        .padding(.leading, 20)
-                    } else if let goBack = onPreviousFrame, step == .keypad {
-                        Button {
-                            goBack()
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 18, weight: .medium))
-                                .foregroundStyle(Theme.primary.opacity(0.6))
-                        }
-                        .padding(.leading, 20)
                     }
-
-                    Spacer()
-                }
-                .overlay {
-                    if step != .drawing && step != .breakpoint {
-                        Text("Frame \(frameNumber)")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(Theme.primary)
-                    }
-                }
-                .padding(.top, 20)
-
-                if step != .drawing && step != .breakpoint {
-                    Spacer()
-                }
-
-                // Score box — hidden during drawing/breakpoint steps
-                if step != .drawing && step != .breakpoint {
-                    FrameScoreBoxView(frame: frame, runningTotal: runningTotal)
-
-                    Spacer()
-                }
-
-                // Step content
-                Group {
-                    switch step {
-                    case .keypad:
-                        KeypadView(onTap: handleKeyTap)
-                            .padding(.horizontal, 40)
-
-                    case .pinSelection:
-                        VStack(spacing: 8) {
-                            Text("Select the \(frame.pinsRemaining) remaining pin\(frame.pinsRemaining == 1 ? "" : "s")")
-                                .font(.system(size: 15))
-                                .foregroundStyle(Theme.secondary)
-                            PinLayoutView(pins: $pins, requiredSelections: frame.pinsRemaining)
-                        }
-
-                    case .drawing:
-                        VStack(spacing: 16) {
-                            Text("Estimate your ball position\nat release and the arrows")
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(Theme.primary)
-                                .multilineTextAlignment(.center)
-
-                            ReleaseView(
-                                releaseCoord: $releaseCoord,
-                                arrowsCoord: $arrowsCoord
-                            )
-                            .padding(.horizontal, 32)
-                        }
-                        .frame(maxWidth: .infinity)
-
-                    case .breakpoint:
-                        VStack(spacing: 16) {
-                            Text("Tap where your ball breaks,\nthen set entry angle")
-                                .font(.system(size: 17, weight: .medium))
-                                .foregroundStyle(Theme.primary)
-                                .multilineTextAlignment(.center)
-
-                            BreakpointView(
-                                breakpointCoord: $breakpointCoord,
-                                entryCoord: $entryCoord
-                            )
-                            .padding(.horizontal, 32)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                }
-                .transition(.opacity)
-                .animation(.easeInOut(duration: 0.2), value: step)
-
-                Spacer()
-
-                // Navigation row
-                if step == .drawing || step == .breakpoint {
+                )
+            } else {
+                VStack(spacing: 0) {
+                    // Top bar: back-to-previous-frame arrow + frame label
                     HStack {
-                        Button {
-                            goBackStep()
-                        } label: {
-                            Image(systemName: "arrow.left")
-                                .font(.system(size: 20))
-                                .foregroundStyle(Theme.primary)
+                        if let goBack = onPreviousFrame, step == .keypad {
+                            Button {
+                                goBack()
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundStyle(Theme.primary.opacity(0.6))
+                            }
+                            .padding(.leading, 20)
                         }
-                        .padding(.leading, 28)
 
                         Spacer()
-
-                        Button {
-                            skipDrawing()
-                        } label: {
-                            Text("Skip this step")
-                                .font(.system(size: 15))
-                                .foregroundStyle(Theme.secondary)
-                        }
-
-                        Button {
-                            advanceStep()
-                        } label: {
-                            Text("Continue")
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundStyle(Theme.primary.opacity(canContinueDrawing ? 0.8 : 0.3))
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(Theme.surface.opacity(canContinueDrawing ? 1 : 0.3))
-                                )
-                        }
-                        .disabled(!canContinueDrawing)
-                        .padding(.trailing, 28)
                     }
-                    .padding(.bottom, 36)
-                } else {
-                    HStack {
-                        if step != .keypad {
+                    .overlay {
+                        if step != .drawing && step != .breakpoint {
+                            Text("Frame \(frameNumber)")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(Theme.primary)
+                        }
+                    }
+                    .padding(.top, 20)
+
+                    if step != .drawing && step != .breakpoint {
+                        Spacer()
+                    }
+
+                    // Score box — hidden during drawing/breakpoint steps
+                    if step != .drawing && step != .breakpoint {
+                        FrameScoreBoxView(frame: frame, runningTotal: runningTotal)
+
+                        Spacer()
+                    }
+
+                    // Step content
+                    Group {
+                        switch step {
+                        case .keypad:
+                            KeypadView(onTap: handleKeyTap)
+                                .padding(.horizontal, 40)
+
+                        case .pinSelection:
+                            VStack(spacing: 8) {
+                                Text("Select the \(frame.pinsRemaining) remaining pin\(frame.pinsRemaining == 1 ? "" : "s")")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(Theme.secondary)
+                                PinLayoutView(pins: $pins, requiredSelections: frame.pinsRemaining)
+                            }
+
+                        case .drawing:
+                            VStack(spacing: 16) {
+                                Text("Estimate your ball position\nat release and the arrows")
+                                    .font(.system(size: 17, weight: .medium))
+                                    .foregroundStyle(Theme.primary)
+                                    .multilineTextAlignment(.center)
+
+                                ReleaseView(
+                                    releaseCoord: $releaseCoord,
+                                    arrowsCoord: $arrowsCoord
+                                )
+                                .padding(.horizontal, 32)
+                            }
+                            .frame(maxWidth: .infinity)
+
+                        case .breakpoint:
+                            VStack(spacing: 16) {
+                                Text("Tap where your ball breaks,\nthen set entry angle")
+                                    .font(.system(size: 17, weight: .medium))
+                                    .foregroundStyle(Theme.primary)
+                                    .multilineTextAlignment(.center)
+
+                                BreakpointView(
+                                    breakpointCoord: $breakpointCoord,
+                                    entryCoord: $entryCoord
+                                )
+                                .padding(.horizontal, 32)
+                            }
+                            .frame(maxWidth: .infinity)
+
+                        case .ballSpeed:
+                            EmptyView()
+                        }
+                    }
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.2), value: step)
+
+                    Spacer()
+
+                    // Navigation row
+                    if step == .drawing || step == .breakpoint {
+                        HStack {
                             Button {
                                 goBackStep()
                             } label: {
@@ -218,23 +198,77 @@ struct FrameView: View {
                                     .foregroundStyle(Theme.primary)
                             }
                             .padding(.leading, 28)
-                        }
 
-                        Spacer()
+                            Spacer()
 
-                        Button {
-                            advanceStep()
-                        } label: {
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 20))
-                                .foregroundStyle(Theme.primary)
-                                .opacity(canAdvance ? 1 : 0.3)
+                            Button {
+                                skipDrawing()
+                            } label: {
+                                Text("Skip this step")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(Theme.secondary)
+                            }
+
+                            Button {
+                                advanceStep()
+                            } label: {
+                                Text("Continue")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(Theme.primary.opacity(canContinueDrawing ? 0.9 : 0.3))
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(Theme.surface.opacity(canContinueDrawing ? 1 : 0.3))
+                                    )
+                            }
+                            .disabled(!canContinueDrawing)
+                            .padding(.trailing, 28)
                         }
-                        .disabled(!canAdvance)
-                        .padding(.trailing, 28)
+                        .padding(.bottom, 36)
+                    } else {
+                        HStack {
+                            if step != .keypad {
+                                Button {
+                                    goBackStep()
+                                } label: {
+                                    Image(systemName: "arrow.left")
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(Theme.primary)
+                                }
+                                .padding(.leading, 28)
+                            }
+
+                            Spacer()
+
+                            Button {
+                                advanceStep()
+                            } label: {
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 20))
+                                    .foregroundStyle(Theme.primary)
+                                    .opacity(canAdvance ? 1 : 0.3)
+                            }
+                            .disabled(!canAdvance)
+                            .padding(.trailing, 28)
+                        }
+                        .padding(.bottom, 36)
                     }
-                    .padding(.bottom, 36)
                 }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let cancel = onCancel {
+                Button {
+                    cancel()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.primary.opacity(0.5))
+                        .frame(width: 44, height: 44)
+                }
+                .padding(.trailing, 12)
+                .padding(.top, 12)
             }
         }
     }
@@ -372,9 +406,9 @@ struct FrameView: View {
     var canContinueDrawing: Bool {
         switch step {
         case .drawing:
-            return true // sliders have defaults
+            return true
         case .breakpoint:
-            return breakpointCoord != nil // must tap to place breakpoint
+            return breakpointCoord != nil
         default:
             return true
         }
@@ -382,8 +416,21 @@ struct FrameView: View {
 
     private func skipDrawing() {
         skippedDrawing = true
+        finishFrame()
+    }
+
+    private func finishFrame() {
         let pinsStanding = pins.filter { $0.isSelected }.map { $0.id }
-        onComplete(frame, pinsStanding, nil, step)
+        let lineDrawing: LineDrawing? = {
+            guard !skippedDrawing, let bp = breakpointCoord, let ep = entryCoord else { return nil }
+            return LineDrawing(
+                release: releaseCoord,
+                arrows: arrowsCoord,
+                breakpoint: bp,
+                entry_point: ep
+            )
+        }()
+        onComplete(frame, pinsStanding, lineDrawing, ballSpeed, .breakpoint)
     }
 
     private func goBackStep() {
@@ -393,14 +440,11 @@ struct FrameView: View {
         case .pinSelection:
             pins = Pin.defaultSet()
             step = .keypad
+        case .ballSpeed:
+            // handled by BallSpeedView's own onBack
+            break
         case .drawing:
-            if frameNumber == 10 {
-                step = .keypad
-                enteringFirst = false
-                enteringThird = frame.earnsThirdShot
-            } else {
-                step = frame.isStrike ? .keypad : .pinSelection
-            }
+            step = .ballSpeed
         case .breakpoint:
             step = .drawing
         }
@@ -410,26 +454,19 @@ struct FrameView: View {
         switch step {
         case .keypad:
             if frameNumber == 10 || frame.isStrike {
-                step = .drawing
+                step = .ballSpeed
             } else {
                 step = .pinSelection
             }
         case .pinSelection:
-            step = .drawing
+            step = .ballSpeed
+        case .ballSpeed:
+            // handled by BallSpeedView's own buttons
+            break
         case .drawing:
             step = .breakpoint
         case .breakpoint:
-            let pinsStanding = pins.filter { $0.isSelected }.map { $0.id }
-            let lineDrawing: LineDrawing? = {
-                guard let bp = breakpointCoord, let ep = entryCoord else { return nil }
-                return LineDrawing(
-                    release: releaseCoord,
-                    arrows: arrowsCoord,
-                    breakpoint: bp,
-                    entry_point: ep
-                )
-            }()
-            onComplete(frame, pinsStanding, lineDrawing, .breakpoint)
+            finishFrame()
         }
     }
 }

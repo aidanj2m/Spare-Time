@@ -21,6 +21,12 @@ enum Theme {
     /// Neon accent / highlighter (#00E5CC)
     static let neon = Color(red: 0x00 / 255, green: 0xE5 / 255, blue: 0xCC / 255)
 
+    /// Gold accent for stats (#FFA800)
+    static let gold = Color(red: 0xFF / 255, green: 0xA8 / 255, blue: 0x00 / 255)
+
+    /// Hot pink accent for stats (#FF3366)
+    static let pink = Color(red: 0xFF / 255, green: 0x33 / 255, blue: 0x66 / 255)
+
     // MARK: - Semantic Aliases
 
     static let error = Color.red

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MatchSummaryView: View {
     let matchId: String
+    let userId: String
     let completedFrames: [Frame]
     var onDone: () -> Void = {}
 
@@ -271,11 +272,59 @@ struct MatchSummaryView: View {
                 location: location.isEmpty ? nil : location,
                 notes: notes.isEmpty ? nil : notes
             )
+            await checkAndCreateSeries()
         } catch {
             print("[Summary] Failed to update match: \(error)")
         }
         isSaving = false
         onDone()
+    }
+
+    private func checkAndCreateSeries() async {
+        do {
+            // Fetch all matches and all existing series for this user
+            let allMatches = try await APIService.fetchMatches(userId: userId)
+            let allSeries = try await APIService.fetchSeries(userId: userId)
+
+            // Get IDs of games already in a series
+            let usedGameIds = Set(allSeries.flatMap { $0.game_ids })
+
+            // Filter to completed matches played today that aren't in a series
+            let calendar = Calendar.current
+            let today = calendar.startOfDay(for: Date())
+            let isoFormatter = ISO8601DateFormatter()
+
+            let todaysUnusedMatches = allMatches.filter { match in
+                guard match.total_score != nil, !usedGameIds.contains(match.id) else { return false }
+                isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                var date = isoFormatter.date(from: match.date_played)
+                if date == nil {
+                    isoFormatter.formatOptions = [.withInternetDateTime]
+                    date = isoFormatter.date(from: match.date_played)
+                }
+                guard let d = date else { return false }
+                return calendar.isDate(d, inSameDayAs: today)
+            }
+
+            // Group into sets of 3 (first 3 = series 1, next 3 = series 2, etc.)
+            // Only create a series when we have exactly 3 unused games
+            if todaysUnusedMatches.count >= 3 {
+                // Take the first 3 (oldest first — matches are returned desc, so reverse)
+                let batch = Array(todaysUnusedMatches.suffix(3))
+                let gameIds = batch.map { $0.id }
+                let total = batch.compactMap { $0.total_score }.reduce(0, +)
+
+                let payload = APIService.SeriesPayload(
+                    user_id: userId,
+                    game_ids: gameIds,
+                    series: total
+                )
+                _ = try await APIService.createSeries(payload)
+                print("[Summary] Series created: \(total) from \(gameIds)")
+            }
+        } catch {
+            print("[Summary] Series check failed: \(error)")
+        }
     }
 }
 
@@ -340,6 +389,7 @@ private struct ConfettiParticle {
 #Preview {
     MatchSummaryView(
         matchId: "preview",
+        userId: "preview-user",
         completedFrames: [
             Frame(id: 1,  firstShot: 10, secondShot: nil, runningTotal: 27),
             Frame(id: 2,  firstShot: 9,  secondShot: -1,  runningTotal: 47),

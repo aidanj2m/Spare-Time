@@ -268,16 +268,16 @@ struct MatchView: View {
     // MARK: - Mock Data
 
     private static let mockFrames: [APIService.FrameResponse] = [
-        .init(game_id: "mock", frame_number: 1,  first_shot: 9,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: true,  running_total: 19),
-        .init(game_id: "mock", frame_number: 2,  first_shot: 9,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: true,  running_total: 36),
-        .init(game_id: "mock", frame_number: 3,  first_shot: 7,  second_shot: 2,  third_shot: nil, is_strike: false, is_spare: false, running_total: 45),
-        .init(game_id: "mock", frame_number: 4,  first_shot: 8,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: false, running_total: 54),
-        .init(game_id: "mock", frame_number: 5,  first_shot: 9,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: true,  running_total: 74),
-        .init(game_id: "mock", frame_number: 6,  first_shot: 10, second_shot: nil, third_shot: nil, is_strike: true,  is_spare: false, running_total: 101),
-        .init(game_id: "mock", frame_number: 7,  first_shot: 10, second_shot: nil, third_shot: nil, is_strike: true,  is_spare: false, running_total: 121),
-        .init(game_id: "mock", frame_number: 8,  first_shot: 7,  second_shot: 2,  third_shot: nil, is_strike: false, is_spare: false, running_total: 130),
-        .init(game_id: "mock", frame_number: 9,  first_shot: 10, second_shot: nil, third_shot: nil, is_strike: true,  is_spare: false, running_total: 160),
-        .init(game_id: "mock", frame_number: 10, first_shot: 10, second_shot: 10, third_shot: 10,  is_strike: true,  is_spare: false, running_total: 190),
+        .init(game_id: "mock", frame_number: 1,  first_shot: 9,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: true,  running_total: 19,  ball_speed: nil),
+        .init(game_id: "mock", frame_number: 2,  first_shot: 9,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: true,  running_total: 36,  ball_speed: nil),
+        .init(game_id: "mock", frame_number: 3,  first_shot: 7,  second_shot: 2,  third_shot: nil, is_strike: false, is_spare: false, running_total: 45,  ball_speed: nil),
+        .init(game_id: "mock", frame_number: 4,  first_shot: 8,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: false, running_total: 54,  ball_speed: nil),
+        .init(game_id: "mock", frame_number: 5,  first_shot: 9,  second_shot: 1,  third_shot: nil, is_strike: false, is_spare: true,  running_total: 74,  ball_speed: nil),
+        .init(game_id: "mock", frame_number: 6,  first_shot: 10, second_shot: nil, third_shot: nil, is_strike: true,  is_spare: false, running_total: 101, ball_speed: nil),
+        .init(game_id: "mock", frame_number: 7,  first_shot: 10, second_shot: nil, third_shot: nil, is_strike: true,  is_spare: false, running_total: 121, ball_speed: nil),
+        .init(game_id: "mock", frame_number: 8,  first_shot: 7,  second_shot: 2,  third_shot: nil, is_strike: false, is_spare: false, running_total: 130, ball_speed: nil),
+        .init(game_id: "mock", frame_number: 9,  first_shot: 10, second_shot: nil, third_shot: nil, is_strike: true,  is_spare: false, running_total: 160, ball_speed: nil),
+        .init(game_id: "mock", frame_number: 10, first_shot: 10, second_shot: 10, third_shot: 10,  is_strike: true,  is_spare: false, running_total: 190, ball_speed: nil),
     ]
 }
 
@@ -285,6 +285,7 @@ struct MatchView: View {
     NavigationStack {
         MatchView(match: APIService.MatchResponse(
             id: "preview",
+            user_id: "preview-user",
             date_played: "2026-02-20T00:00:00Z",
             total_score: 190
         ))
